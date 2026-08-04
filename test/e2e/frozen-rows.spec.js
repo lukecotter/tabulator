@@ -39,20 +39,17 @@ test.describe("Frozen rows (#4871)", () => {
 		expect(before.frozen.top).toBeGreaterThanOrEqual(before.header.top - 1);
 		expect(before.frozen.bottom).toBeLessThanOrEqual(before.holder.top + 2);
 
-		// Snapshot a body row by text so we can verify it moves on scroll.
-		const sampleText = await page.evaluate(() => {
-			const rows = document.querySelectorAll(".tabulator-tableholder .tabulator-row");
-			return rows[rows.length - 1].textContent;
+		// Snapshot the first rendered body row by text so we can verify the body
+		// moves on scroll. Deliberately NOT "is that same row still rendered
+		// after the scroll" — how many rows a virtual renderer keeps outside the
+		// viewport is its own business, not something a frozen-rows test should
+		// pin down.
+		const firstBodyText = () => page.evaluate(() => {
+			const row = document.querySelector(".tabulator-tableholder .tabulator-row");
+			return row ? row.textContent : null;
 		});
-		const bodyRowTop = (text) => page.evaluate((t) => {
-			const rows = document.querySelectorAll(".tabulator-tableholder .tabulator-row");
-			for (const r of rows) {
-				if (r.textContent === t) return r.getBoundingClientRect().top;
-			}
-			return null;
-		}, text);
-		const bodyTopBefore = await bodyRowTop(sampleText);
-		expect(bodyTopBefore).not.toBeNull();
+		const bodyFirstBefore = await firstBodyText();
+		expect(bodyFirstBefore).not.toBeNull();
 
 		await tableHolder.evaluate(el => { el.scrollTop = 500; });
 		await page.waitForTimeout(100);
@@ -60,10 +57,10 @@ test.describe("Frozen rows (#4871)", () => {
 		const scrollTop = await tableHolder.evaluate(el => el.scrollTop);
 		expect(scrollTop).toBeGreaterThan(0);
 
-		const bodyTopAfter = await bodyRowTop(sampleText);
-		expect(bodyTopAfter).not.toBeNull();
-		// Sanity: the body actually scrolled.
-		expect(bodyTopAfter).toBeLessThan(bodyTopBefore);
+		// Sanity: the body actually scrolled, so the rendered window moved on.
+		const bodyFirstAfter = await firstBodyText();
+		expect(bodyFirstAfter).not.toBeNull();
+		expect(bodyFirstAfter).not.toBe(bodyFirstBefore);
 
 		const after = await rects();
 		// The frozen row's screen position must not change when the body scrolls.
