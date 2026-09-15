@@ -198,6 +198,14 @@ export default class Popup extends CoreFeature{
 		return this.containerEventCoords(origin);
 	}
 	
+	_elementWidth(){
+		return this.element.getBoundingClientRect().width || this.element.offsetWidth;
+	}
+
+	_elementHeight(){
+		return this.element.getBoundingClientRect().height || this.element.offsetHeight;
+	}
+
 	_fitToScreen(x, y, parentEl, parentOffset, position){
 		var scrollTop = this.container === document.body ? document.documentElement.scrollTop : this.container.scrollTop;
 		var scrollLeft = this.container === document.body ? document.documentElement.scrollLeft : this.container.scrollLeft;
@@ -205,25 +213,26 @@ export default class Popup extends CoreFeature{
 		var boundsRight = this.container === document.body ? scrollLeft + document.documentElement.clientWidth : this.container.offsetWidth;
 		var boundsTop = this.container === document.body ? scrollTop : 0;
 		var boundsBottom = this.container === document.body ? scrollTop + document.documentElement.clientHeight : Math.max(this.container.offsetHeight, scrollTop ? this.container.scrollHeight : 0);
+		var popupWidth = this._elementWidth();
 		var newLeft = x;
 		
 		//move menu to start on right edge if it is too close to the edge of the screen
-		if((newLeft + this.element.offsetWidth) > boundsRight || this.reversedX){
+		if((newLeft + popupWidth) > boundsRight || this.reversedX){
 			if(parentEl && position === "right"){
-				newLeft = parentOffset.left - this.element.offsetWidth;
+				newLeft = parentOffset.left - popupWidth;
 			}else if(parentEl && position === "left"){
 				newLeft = parentOffset.left + parentEl.offsetWidth;
 			}else if(parentEl){
-				newLeft = parentOffset.left - this.element.offsetWidth;
+				newLeft = parentOffset.left - popupWidth;
 			}else{
-				newLeft = boundsRight - this.element.offsetWidth;
+				newLeft = boundsRight - popupWidth;
 			}
 			
 			this.reversedX = true;
 		}
 
-		if((newLeft + this.element.offsetWidth) > boundsRight){
-			newLeft = boundsRight - this.element.offsetWidth;
+		if((newLeft + popupWidth) > boundsRight){
+			newLeft = boundsRight - popupWidth;
 		}
 
 		if(newLeft < boundsLeft){
@@ -234,19 +243,19 @@ export default class Popup extends CoreFeature{
 		this.offset.right = null;
 		
 		//move menu to start on bottom edge if it is too close to the edge of the screen
-		if((y + this.element.offsetHeight) > boundsBottom) {
+		if((y + this._elementHeight()) > boundsBottom) {
 			if(parentEl){
 				switch(position){
 					case "bottom":
-						this.offset.top = this.offset.top - this.element.offsetHeight - parentEl.offsetHeight - 1;
+						this.offset.top = this.offset.top - this._elementHeight() - parentEl.offsetHeight - 1;
 						break;
 
 					default:
-						this.offset.top = this.offset.top - this.element.offsetHeight + parentEl.offsetHeight + 1;
+						this.offset.top = this.offset.top - this._elementHeight() + parentEl.offsetHeight + 1;
 				}
 
 			}else{
-				let menuHeight = this.element.offsetHeight;
+				let menuHeight = this._elementHeight();
 				if(menuHeight > (boundsBottom - boundsTop)){
 					this.offset.top = boundsTop;
 					this.element.style.height = (boundsBottom - boundsTop) + "px";
@@ -260,8 +269,8 @@ export default class Popup extends CoreFeature{
 			}
 		}
 
-		if((this.offset.top + this.element.offsetHeight) > boundsBottom){
-			this.offset.top = boundsBottom - this.element.offsetHeight;
+		if((this.offset.top + this._elementHeight()) > boundsBottom){
+			this.offset.top = boundsBottom - this._elementHeight();
 		}
 
 		if(this.offset.top < boundsTop){
