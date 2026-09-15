@@ -74,10 +74,15 @@ function setViewport(spec: {
 	height: number;
 	scrollHeight?: number;
 	scrollTop?: number;
+	scrollLeft?: number;
+	bodyWidth?: number;
 }): void {
-	stub(document.body, "offsetWidth", spec.width);
+	stub(document.body, "offsetWidth", spec.bodyWidth ?? spec.width);
 	stub(document.body, "offsetHeight", spec.height);
 	stub(document.body, "scrollHeight", spec.scrollHeight ?? spec.height);
+	stub(document.documentElement, "clientWidth", spec.width);
+	stub(document.documentElement, "clientHeight", spec.height);
+	stub(document.documentElement, "scrollLeft", spec.scrollLeft ?? 0);
 	stub(document.documentElement, "scrollTop", spec.scrollTop ?? 0);
 }
 
