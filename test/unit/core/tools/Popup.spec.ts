@@ -57,12 +57,28 @@ function popupLeft(popup: Popup, bodyWidth: number): number {
 	return bodyWidth - (popup.offset.right as number) - popup.element.offsetWidth;
 }
 
-function expectInsideViewport(popup: Popup): void {
-	const bodyWidth = document.body.offsetWidth;
-	const left = popupLeft(popup, bodyWidth);
+// The bounds _fitToScreen uses for a body-hosted popup. These are page
+// coordinates, so a horizontally scrolled viewport starts at scrollLeft.
+// https://github.com/tabulator-tables/tabulator/issues/4285
+function viewportBounds(): { left: number; right: number; top: number; bottom: number } {
+	const left = document.documentElement.scrollLeft;
+	const top = document.documentElement.scrollTop;
 
-	expect(left).toBeGreaterThanOrEqual(0);
-	expect(left + popup.element.offsetWidth).toBeLessThanOrEqual(bodyWidth);
+	return {
+		left,
+		right: left + document.documentElement.clientWidth,
+		top,
+		bottom: top + document.documentElement.clientHeight,
+	};
+}
+
+function expectInsideViewport(popup: Popup): void {
+	const bounds = viewportBounds();
+	// `right` resolves against the containing block, not the viewport
+	const left = popupLeft(popup, document.body.offsetWidth);
+
+	expect(left).toBeGreaterThanOrEqual(bounds.left);
+	expect(left + popup.element.offsetWidth).toBeLessThanOrEqual(bounds.right);
 }
 
 function resolvedTop(popup: Popup): number {
@@ -121,6 +137,50 @@ function createPopup(spec: { width: number; height: number }) {
 	);
 
 	return popup;
+}
+
+// `popupContainer: true` makes the table element the container, so bounds come
+// from the container box rather than the viewport.
+function createContainerPopup(spec: {
+	width: number;
+	height: number;
+	container: {
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		scrollTop?: number;
+		scrollHeight?: number;
+	};
+}) {
+	const tableElement = document.createElement("div");
+
+	stub(tableElement, "offsetWidth", spec.container.width);
+	stub(tableElement, "offsetHeight", spec.container.height);
+	stub(tableElement, "scrollTop", spec.container.scrollTop ?? 0);
+	stub(tableElement, "scrollHeight", spec.container.scrollHeight ?? spec.container.height);
+	placeAt(
+		tableElement,
+		spec.container.left,
+		spec.container.top,
+		spec.container.width,
+		spec.container.height,
+	);
+	document.body.appendChild(tableElement);
+
+	const el = document.createElement("div");
+	stub(el, "offsetWidth", spec.width);
+	stub(el, "offsetHeight", spec.height);
+
+	return new Popup(
+		{
+			destroyed: false,
+			element: tableElement,
+			options: { popupContainer: true },
+			eventBus: { subscribe: jest.fn(), unsubscribe: jest.fn() },
+		},
+		el,
+	);
 }
 
 describe("Popup tool positioning", () => {
@@ -423,8 +483,8 @@ describe("Popup tool positioning", () => {
 		});
 
 		it("flips a popup that would fall below a scrolled page", () => {
-			// Visible area is scrollTop..scrollTop + body height, but the check
-			// widens to scrollHeight once the page is scrolled.
+			// Visible area is scrollTop..scrollTop + viewport height. A body-hosted
+			// popup is bound by that, not by the full document height.
 			setViewport({
 				width: 650,
 				height: 600,
@@ -446,6 +506,252 @@ describe("Popup tool positioning", () => {
 			popup.show(anchor.el, "bottom");
 
 			expect(resolvedTop(popup) + POPUP_HEIGHT).toBeLessThanOrEqual(100 + 600);
+		});
+	});
+
+	// Everything below covers the bounds model: what happens when a popup would
+	// fall outside the box it is allowed to occupy.
+	// https://github.com/tabulator-tables/tabulator/issues/4285
+
+	describe("clamping after reversal", () => {
+		it("pins the popup to the right edge rather than overshooting it", () => {
+			setViewport({ width: 650, height: 600 });
+
+			const POPUP_WIDTH = 300;
+			const popup = createPopup({ width: POPUP_WIDTH, height: 100 });
+
+			// "left" reverses to the anchor's right, which here runs off the far
+			// edge (540 + 300 = 840). The clamp pulls it back.
+			const anchor = createDiv({
+				left: 500,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "left");
+
+			expect(popup.offset.left).toBe(650 - POPUP_WIDTH);
+			expectInsideViewport(popup);
+		});
+
+		it("anchors a popup wider than the viewport to the left edge", () => {
+			setViewport({ width: 650, height: 600 });
+
+			// Wider than the viewport, so both clamps fire and disagree. Right runs
+			// first, so left wins and the start of the popup stays readable.
+			const popup = createPopup({ width: 800, height: 100 });
+
+			const anchor = createDiv({
+				left: 100,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "left");
+
+			expect(popup.offset.left).toBe(0);
+		});
+
+		it("anchors a popup taller than the viewport to the top edge and caps its height", () => {
+			setViewport({ width: 650, height: 600 });
+
+			const popup = createPopup({ width: 300, height: 800 });
+
+			popup.show(new MouseEvent("contextmenu", { clientX: 10, clientY: 200 }));
+
+			expect(popup.offset.top).toBe(0);
+			expect(popup.element.style.height).toBe("600px");
+		});
+	});
+
+	describe("a horizontally scrolled page", () => {
+		it("does not reverse a popup that fits in the scrolled viewport", () => {
+			// Page coordinate 1100 is off-screen by the old body-width model but
+			// well inside the visible 1000..1650 band.
+			setViewport({ width: 650, height: 600, scrollLeft: 1000 });
+
+			const popup = createPopup({ width: 300, height: 100 });
+
+			const anchor = createDiv({
+				left: 1100,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			expect(popup.reversedX).toBe(false);
+			expect(popup.offset.left).toBe(1100);
+			expectInsideViewport(popup);
+		});
+
+		it("reverses into the scrolled viewport, not the page origin", () => {
+			setViewport({ width: 650, height: 600, scrollLeft: 1000 });
+
+			const POPUP_WIDTH = 300;
+			const popup = createPopup({ width: POPUP_WIDTH, height: 100 });
+
+			const anchor = createDiv({
+				left: 1600,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			expect(popup.reversedX).toBe(true);
+			expect(popup.offset.left).toBe(1600 - POPUP_WIDTH);
+			expectInsideViewport(popup);
+		});
+
+		it("clamps to scrollLeft rather than to zero", () => {
+			setViewport({ width: 650, height: 600, scrollLeft: 1000 });
+
+			// Wider than the viewport, so the left clamp decides the result. It has
+			// to land on the scrolled edge, not on the page origin.
+			const popup = createPopup({ width: 800, height: 100 });
+
+			const anchor = createDiv({
+				left: 1100,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "left");
+
+			expect(popup.offset.left).toBe(1000);
+		});
+	});
+
+	describe("a vertically scrolled page", () => {
+		it("caps a tall popup to the viewport, not to the document height", () => {
+			setViewport({
+				width: 650,
+				height: 600,
+				scrollHeight: 5000,
+				scrollTop: 1000,
+			});
+
+			const popup = createPopup({ width: 300, height: 800 });
+
+			popup.show(new MouseEvent("contextmenu", { clientX: 10, clientY: 1200 }));
+
+			expect(popup.offset.top).toBe(1000);
+			expect(popup.element.style.height).toBe("600px");
+		});
+
+		it("keeps a popup that flips past the top edge inside the visible band", () => {
+			setViewport({
+				width: 650,
+				height: 600,
+				scrollHeight: 5000,
+				scrollTop: 1000,
+			});
+
+			const POPUP_HEIGHT = 500;
+			const popup = createPopup({ width: 300, height: POPUP_HEIGHT });
+
+			// Tall enough that flipping up from here lands at 599, above the
+			// visible band, so the clamp has to pull it back down.
+			const anchor = createDiv({
+				left: 100,
+				top: 1100,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			expect(resolvedTop(popup)).toBeGreaterThanOrEqual(1000);
+			expect(resolvedTop(popup) + POPUP_HEIGHT).toBeLessThanOrEqual(1600);
+		});
+	});
+
+	describe("a body narrower than the viewport", () => {
+		// The original report: a body-hosted popup treated as overflowing because
+		// the body box, not the viewport, was used as the bound.
+		// https://github.com/tabulator-tables/tabulator/issues/4285
+		it("does not reverse a popup that still fits on screen", () => {
+			setViewport({ width: 650, height: 600, bodyWidth: 400 });
+
+			const popup = createPopup({ width: 300, height: 100 });
+
+			const anchor = createDiv({
+				left: 300,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			expect(popup.reversedX).toBe(false);
+			expect(popup.offset.left).toBe(300);
+		});
+	});
+
+	describe("a non-body popup container", () => {
+		it("bounds the popup by the container, not the viewport", () => {
+			// Viewport is far larger than the container, so only the container box
+			// can explain a reversal here.
+			setViewport({ width: 2000, height: 2000 });
+
+			const POPUP_WIDTH = 300;
+			const popup = createContainerPopup({
+				width: POPUP_WIDTH,
+				height: 100,
+				container: { left: 0, top: 0, width: 400, height: 300 },
+			});
+
+			const anchor = createDiv({
+				left: 300,
+				top: 10,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			expect(popup.reversedX).toBe(true);
+			expect(popup.offset.left).toBe(300 - POPUP_WIDTH);
+		});
+
+		it("keeps the scrollHeight allowance for a container that scrolls internally", () => {
+			// A container scrolled internally has content past its visible box, so
+			// the vertical bound widens to scrollHeight. Predates the body handling
+			// and has to survive it - see commit c07f37cb.
+			setViewport({ width: 2000, height: 2000 });
+
+			const popup = createContainerPopup({
+				width: 300,
+				height: 100,
+				container: {
+					left: 0,
+					top: 0,
+					width: 400,
+					height: 300,
+					scrollTop: 50,
+					scrollHeight: 2000,
+				},
+			});
+
+			const anchor = createDiv({
+				left: 10,
+				top: 500,
+				width: 40,
+				height: 20,
+			});
+
+			popup.show(anchor.el, "bottom");
+
+			// Sits below the container's visible box but inside its scrollable
+			// content, so it is left where it is rather than flipped.
+			expect(resolvedTop(popup)).toBe(520);
 		});
 	});
 });
