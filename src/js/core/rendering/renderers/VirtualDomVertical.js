@@ -103,17 +103,20 @@ export default class VirtualDomVertical extends Renderer{
 		var newRows = this.rows();
 
 		if(newRows.length){
-			//The anchor scan above used the PRE-callback (e.g. pre-filter) window
-			//indices. If that window now points past the new row count, topRow/
-			//topOffset are stale and would inflate vDomTopPad into a blank strip
-			//across the top. In that case do a fresh fill, which resets
-			//vDomTopPad to 0.
-			var windowInvalid = this.vDomTop >= newRows.length || this.vDomBottom >= newRows.length;
+			if(topRow === false){
+				//no rendered row to anchor on, start from the top if nothing was rendered before,
+				//otherwise the rendered window is past the end of the shrunken data so anchor on the last row
+				topRow = rows.length ? newRows.length - 1 : 0;
+			}
 
-			if(windowInvalid){
+			if(topRow >= newRows.length){
+				//The anchor row was found in the PRE-callback (e.g. pre-filter) rows
+				//but points past the new row count, so its topOffset is stale and
+				//would inflate vDomTopPad into a blank strip across the top. A fresh
+				//fill resets vDomTopPad to 0.
 				this._virtualRenderFill();
 			}else{
-				this._virtualRenderFill((topRow === false ? newRows.length - 1 : topRow), true, topOffset || 0);
+				this._virtualRenderFill(topRow, true, topOffset || 0);
 			}
 		}else{
 			this.clear();
@@ -364,7 +367,8 @@ export default class VirtualDomVertical extends Renderer{
 					totalRowsRendered++;
 				});
 
-				resized = this.table.rowManager.adjustTableSize();
+				//block the redraw, this loop picks up the new container size itself
+				resized = this.table.rowManager.adjustTableSize(true);
 				containerHeight = this.elementVertical.clientHeight;
 				if(resized && (fixedHeight || this.table.options.maxHeight))
 				{
